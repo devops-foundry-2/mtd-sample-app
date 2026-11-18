@@ -1,0 +1,114 @@
+# ============================================================
+# mule-ci.yml — Caller workflow template for a MuleSoft app repo.
+# Copy this file to .github/workflows/mule-ci.yml in the app repo
+# and replace every __PLACEHOLDER__ with the app-specific value.
+#
+# Placeholders:
+#   devops-foundry-2              devops-foundry-2 (the GitHub organisation)
+#   main    main (or a pinned tag of mule-cicd-workflows)
+#   ch2 ch2
+#   __BUSINESS_GROUPS__  JSON array in deploy order — primary BG first:
+#                        Single-region EMEA:  '[{"key":"emea","prefix":"EMEA"}]'
+#                        Single-region AMER:  '[{"key":"amer","prefix":"AMER"}]'
+#                        Dual-region:         '[{"key":"emea","prefix":"EMEA"},{"key":"amer","prefix":"AMER"}]'
+#
+# GitHub Environments required on the app repo (created by onboarding script):
+#   EMEA-Design, EMEA-Sandbox, EMEA-Production
+#   AMER-Design, AMER-Sandbox, AMER-Production  (dual-region only)
+#
+# Repository / organisation configuration (seeded at onboarding):
+#   secrets  MAVEN_SETTINGS_XML (base64), ENV_SETTINGS_TOKEN,
+#            NONPROD_CONNECTED_APP_ID, NONPROD_CONNECTED_APP_SECRET,
+#            PROD_CONNECTED_APP_ID, PROD_CONNECTED_APP_SECRET,
+#            LOCAL_SECURE_KEY, DESIGN_SECURE_KEY, SANDBOX_SECURE_KEY, PRODUCTION_SECURE_KEY
+#   vars     EMEA_ANYPOINT_BG_ID, EMEA_DESIGN_ENV_ID, EMEA_DESIGN_ENV_NAME,
+#            EMEA_SANDBOX_ENV_ID, EMEA_SANDBOX_ENV_NAME,
+#            EMEA_PRODUCTION_ENV_ID, EMEA_PRODUCTION_ENV_NAME
+#            (and AMER_* equivalents for dual-region apps)
+# ============================================================
+name: mule-ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy-tier:
+        description: "Manual feature-branch deploy tier (Design or Sandbox)"
+        required: true
+        default: Design
+        type: choice
+        options:
+          - Design
+          - Sandbox
+      bg-key:
+        description: "Business group key (emea or amer)"
+        required: true
+        default: emea
+      bg-prefix:
+        description: "BG variable prefix (EMEA or AMER)"
+        required: true
+        default: EMEA
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  # ── PR validation ────────────────────────────────────────────────────────────
+  pre-checks:
+    name: PR Validation
+    if: github.event_name == 'pull_request'
+    uses: devops-foundry-2/mule-cicd-workflows/.github/workflows/validate.yml@main
+    with:
+      run-owasp: false
+      run-static-analysis: false
+      templates-ref: main
+    secrets: inherit
+
+  # ── Feature-branch manual deploy ─────────────────────────────────────────────
+  feature-deploy:
+    name: Feature Deploy (${{ github.event.inputs.deploy-tier }} / ${{ github.event.inputs.bg-key }})
+    if: github.event_name == 'workflow_dispatch'
+    uses: devops-foundry-2/mule-cicd-workflows/.github/workflows/feature-deploy.yml@main
+    with:
+      tier: ${{ github.event.inputs.deploy-tier }}
+      bg-key: ${{ github.event.inputs.bg-key }}
+      bg-prefix: ${{ github.event.inputs.bg-prefix }}
+      deployment-target: ch2
+      templates-ref: main
+      env-settings-ref: main
+    secrets: inherit
+
+  # ── Main branch: build SNAPSHOT + auto-deploy to Design then Sandbox ─────────
+  build-and-deploy:
+    name: Build & Deploy (Design → Sandbox)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: devops-foundry-2/mule-cicd-workflows/.github/workflows/build-publish.yml@main
+    with:
+      deployment-target: ch2
+      multi-bg-mode: sequential
+      business-groups: '[{"key":"emea","prefix":"EMEA"},{"key":"amer","prefix":"AMER"}]'
+      templates-ref: main
+      env-settings-ref: main
+    secrets: inherit
+
+  # ── vX.Y.Z tag: deploy to Production (approval-gated per BG) ─────────────────
+  production:
+    name: Production Deploy
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: devops-foundry-2/mule-cicd-workflows/.github/workflows/promote.yml@main
+    with:
+      deployment-target: ch2
+      multi-bg-mode: sequential
+      business-groups: '[{"key":"emea","prefix":"EMEA"},{"key":"amer","prefix":"AMER"}]'
+      templates-ref: main
+      env-settings-ref: main
+    secrets: inherit
