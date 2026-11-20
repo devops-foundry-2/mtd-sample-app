@@ -89,7 +89,7 @@ jobs:
     uses: devops-foundry-2/mule-cicd-workflows/.github/workflows/main-release.yml@main
     with:
       deployment-target: ch2
-      multi-bg-mode: sequential
+      multi-bg-mode: parallel
       business-groups: '[{"key":"emea","prefix":"EMEA"},{"key":"amer","prefix":"AMER"}]'
       templates-ref: main
       env-settings-ref: main
